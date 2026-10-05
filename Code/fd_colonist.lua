@@ -4,10 +4,6 @@
 local FD = ForceDelete
 if not FD then return end
 
--- Avoid redefining colonist helpers on repeated mod loads.
-if FD.colonist_loaded then return end
-FD.colonist_loaded = true
-
 -- Create the colonist module namespace.
 FD.Colonist = FD.Colonist or {}
 local Colonist = FD.Colonist
@@ -59,6 +55,8 @@ local methods = {
 	"SetResidence",
 	"SetDome",
 	"AssignToService",
+	"ReturnOutstandingMeal",
+	"DiscardTransportTicket",
 	"delete",
 }
 
@@ -99,6 +97,10 @@ end
 
 -- Clear relationship/path state before asking the game to erase the colonist.
 local function PrepareForDelete(colonist)
+	-- Services & Science reserves meal portions before visits and train trips.
+	-- Return them while the service still exists, before removing assignments
+	-- or dropping command destructors. Older builds simply lack this method.
+	FD.CallObjectMethod(colonist, "ReturnOutstandingMeal")
 	FD.CallObjectMethod(colonist, "AssignToService", false)
 	FD.CallObjectMethod(colonist, "SetWorkplace", false)
 	FD.CallObjectMethod(colonist, "SetResidence", false)
@@ -109,7 +111,10 @@ end
 -- Clear train transport state without starting a replacement command.
 local function ClearTransportTicket(colonist)
 	local ticket = FD.ReadField(colonist, "transport_ticket")
+	FD.CallObjectMethod(colonist, "DiscardTransportTicket")
 
+	-- Also prune the saved ticket's links when a stuck or older ticket cannot
+	-- be fully released by the native cancellation method.
 	if type(ticket) == "table" or type(ticket) == "userdata" then
 		for _, field in ipairs({ "src_station", "dst_station", "vehicle" }) do
 			local obj = FD.ReadField(ticket, field)
@@ -248,17 +253,16 @@ end
 
 -- Patch the engine's invalid train-exit branch to remove colonists by value.
 function Colonist.PatchExitVehicle()
-	if Colonist.exit_vehicle_patched then
-		return true
-	end
-
 	local colonist_class = FD.Global("Colonist")
 	local original = FD.ReadField(colonist_class, "ExitVehicle")
 	if type(original) ~= "function" then
 		return false
 	end
+	if original == Colonist.exit_vehicle_wrapper then
+		return true
+	end
 
-	colonist_class.ExitVehicle = function(self, vehicle, ...)
+	local wrapper = function(self, vehicle, ...)
 		local holder = FD.ReadField(self, "holder")
 
 		if not holder or holder ~= vehicle or not IsSameMapSafe(self, vehicle) then
@@ -269,32 +273,31 @@ function Colonist.PatchExitVehicle()
 
 		return original(self, vehicle, ...)
 	end
-
-	Colonist.exit_vehicle_patched = true
+	colonist_class.ExitVehicle = wrapper
+	Colonist.exit_vehicle_wrapper = wrapper
 	return true
 end
 
 -- Patch stale building entry attempts so deleted passages do not assert later.
 function Colonist.PatchEnterBuilding()
-	if Colonist.enter_building_patched then
-		return true
-	end
-
 	local colonist_class = FD.Global("Colonist")
 	local original = FD.ReadField(colonist_class, "EnterBuilding")
 	if type(original) ~= "function" then
 		return false
 	end
+	if original == Colonist.enter_building_wrapper then
+		return true
+	end
 
-	colonist_class.EnterBuilding = function(self, building, ...)
+	local wrapper = function(self, building, ...)
 		if not FD.IsObjectValid(self) or not FD.IsObjectValid(building) then
 			return false
 		end
 
 		return original(self, building, ...)
 	end
-
-	Colonist.enter_building_patched = true
+	colonist_class.EnterBuilding = wrapper
+	Colonist.enter_building_wrapper = wrapper
 	return true
 end
 
@@ -383,6 +386,7 @@ function Colonist.GetRelevantAttributes(colonist)
 	}
 end
 
+-- Re-register after Lua reloads; ChainOnMsg deduplicates within each registry.
 -- Install the transport patch now and retry when game classes are finalized.
 FD.ChainOnMsg("ClassesPostprocess", "force_delete_colonist_exit_vehicle", Colonist.PatchExitVehicle)
 FD.ChainOnMsg("DataLoaded", "force_delete_colonist_exit_vehicle", Colonist.PatchExitVehicle)

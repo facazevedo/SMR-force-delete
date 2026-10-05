@@ -532,24 +532,23 @@ end
 
 -- Guard engine request cleanup against stale boolean request references.
 function FD.PatchRequestUnassignUnit()
-	if FD.request_unassign_patched then
-		return true
-	end
-
 	local original = FD.Global("RequestUnassignUnit")
 	if type(original) ~= "function" then
 		return false
 	end
+	if original == FD.request_unassign_wrapper then
+		return true
+	end
 
-	_G.RequestUnassignUnit = function(request, ...)
+	local wrapper = function(request, ...)
 		if type(FD.ReadField(request, "UnassignUnit")) ~= "function" then
 			return false
 		end
 
 		return original(request, ...)
 	end
-
-	FD.request_unassign_patched = true
+	_G.RequestUnassignUnit = wrapper
+	FD.request_unassign_wrapper = wrapper
 	return true
 end
 
@@ -620,7 +619,12 @@ function FD.ChainOnMsg(message, key, handler)
 		return false
 	end
 
-	FD.onmsg_chained = FD.onmsg_chained or {}
+	-- Lua reloads replace the engine's message registry. Register with the new
+	-- registry even when the mod namespace survived the reload.
+	if FD.onmsg_registry ~= on_msg then
+		FD.onmsg_registry = on_msg
+		FD.onmsg_chained = {}
+	end
 	local chain_key = message .. ":" .. key
 	if FD.onmsg_chained[chain_key] then
 		return true
@@ -974,12 +978,6 @@ end
 
 -- Refresh diagnostics when normal selection messages fire.
 function FD.InstallSelectionHooks()
-	if FD.selection_hooks_installed then
-		return
-	end
-
-	FD.selection_hooks_installed = true
-
 	-- Hook the common gameplay/editor selection messages.
 	for _, message in ipairs({
 		"InGameInterfaceCreated",
@@ -1105,20 +1103,23 @@ function FD.PatchGameShortcuts(shortcuts_host)
 	end
 	FD.AddDiagnosticShortcuts(target)
 
-	if FD.shortcuts_patched or not GameShortcuts or type(GameShortcuts.Init) ~= "function" then
+	if not GameShortcuts or type(GameShortcuts.Init) ~= "function" then
+		return
+	end
+	if GameShortcuts.Init == FD.shortcut_init_wrapper then
 		return
 	end
 
 	-- Patch the shortcut initializer once and append our actions after the base
 	-- game has created its shortcut container.
 	local original_init = GameShortcuts.Init
-	GameShortcuts.Init = function(self, parent, context, ...)
+	local wrapper = function(self, parent, context, ...)
 		local result = original_init(self, parent, context, ...)
 		FD.AddDiagnosticShortcuts(parent, context)
 		return result
 	end
-
-	FD.shortcuts_patched = true
+	GameShortcuts.Init = wrapper
+	FD.shortcut_init_wrapper = wrapper
 end
 
 -- Retry shortcut patching and engine guards when classes/data are ready.
