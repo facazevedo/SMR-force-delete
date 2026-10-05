@@ -148,5 +148,137 @@ test("reloaded colonist module reinstalls lifecycle hooks without duplicates", f
 	assert(Colonist.EnterBuilding == wrapped, "guard was wrapped twice")
 end)
 
+dofile("Code/fd_drone.lua")
+dofile("Code/fd_rover.lua")
+dofile("Code/fd_shuttle.lua")
+dofile("Code/fd_rocket.lua")
+dofile("Code/fd_dome.lua")
+
+local function mobile_fixture(class)
+	local obj = { class = class, command = "Work", command_thread = { running = true }, uninterruptable_importance = 10 }
+	function obj:IsValidPos() return not self.invalid_position end
+	function obj:GetPos() return self.invalid_position and false or { point = true } end
+	function obj:SetPos(pos) self.position = pos; self.invalid_position = false end
+	function obj:GetParent() return self.parent end
+	function obj:Detach() self.parent = false end
+	function obj:SetHolder(holder) self.holder = holder; self.holder_released = true end
+	function obj:SetCommand(command)
+		assert(not self.uninterruptable_importance, "stale uninterruptable command")
+		assert(not self:GetParent(), "unit still physically attached")
+		self.command = command
+		self.command_thread = { running = true, command = command }
+		self.new_command_started = true
+		return true
+	end
+	return obj
+end
+function IsValidThread(thread) return type(thread) == "table" and thread.running end
+function DeleteThread(thread) thread.running = false end
+
+test("stopping a command clears its uninterruptable state", function()
+	local obj = mobile_fixture("Colonist")
+	FD.StopCommandNoDestructors(obj)
+	assert(not obj.uninterruptable_importance, "new command would assert")
+end)
+test("a destructor thread is stopped even without a command thread", function()
+	local thread = { running = true }
+	local obj = { thread_running_destructors = thread }
+	FD.StopCommandNoDestructors(obj)
+	assert(not thread.running, "destructor thread was skipped")
+end)
+test("colonists use their object position API and start a fresh command", function()
+	local old_valid_pos = IsValidPos
+	IsValidPos = function(value) return type(value) == "table" and value.point == true end
+	local obj = mobile_fixture("Colonist")
+	local result = FD.Colonist.IdleForRelatedObjectDelete(obj)
+	IsValidPos = old_valid_pos
+	assert(result and obj.new_command_started, "colonist command was not restarted")
+end)
+test("drone cleanup restarts work and retains a surviving controller", function()
+	local obj = mobile_fixture("Drone")
+	local controller = { drones = { obj } }
+	obj.command_center = controller
+	assert(FD.Drone.IdleForRelatedObjectDelete(obj, {}))
+	assert(obj.command_center == controller, "surviving controller was discarded")
+	assert(obj.new_command_started and IsValidThread(obj.command_thread), "drone has no active command")
+end)
+test("drone cleanup releases a controller that is being deleted", function()
+	local obj = mobile_fixture("Drone")
+	local controller = { drones = { obj } }
+	obj.command_center = controller
+	function obj:SetCommandCenter(center) self.command_center = center; controller.drones = {} end
+	assert(FD.Drone.IdleForRelatedObjectDelete(obj, { [controller] = true }))
+	assert(obj.command_center == false and #controller.drones == 0)
+	assert(obj.new_command_started, "orphan drone never searches for a controller")
+end)
+test("rover recovery starts a command without destroying its repair request", function()
+	local obj = mobile_fixture("RCTransport")
+	local request = {}
+	obj.repair_work_request = request
+	assert(FD.Rover.IdleForRelatedObjectDelete(obj))
+	assert(obj.repair_work_request == request, "surviving rover lost its repair request")
+	assert(obj.new_command_started)
+end)
+test("shuttle recovery starts a new command after clearing a transport task", function()
+	local obj = mobile_fixture("CargoShuttle")
+	obj.transport_task = { source_dome = {}, state = "running" }
+	obj.is_colonist_transport_task = true
+	assert(FD.Shuttle.IdleForRelatedObjectDelete(obj))
+	assert(obj.new_command_started)
+	assert(not obj.transport_task and not obj.is_colonist_transport_task)
+end)
+test("rocket deletion detaches and restarts every surviving unit type", function()
+	local rocket = { class = "UniversalRocket", pos = { point = true } }
+	function rocket:delete() self.deleted = true end
+	local rover = mobile_fixture("RCTransport")
+	local passenger = mobile_fixture("Colonist")
+	local drone = mobile_fixture("Drone")
+	for _, unit in ipairs({ rover, passenger, drone }) do
+		unit.holder = rocket
+		unit.parent = rocket
+		unit.invalid_position = true
+	end
+	rocket.rovers = { rover }
+	rocket.boarded = { passenger }
+	rocket.drones = { drone }
+	assert(FD.Rocket.Delete(rocket))
+	for _, unit in ipairs({ rover, passenger, drone }) do
+		assert(unit.new_command_started and not unit:GetParent(), unit.class .. " was not restarted/detached")
+		assert(unit.holder_released, unit.class .. " skipped native holder cleanup")
+	end
+end)
+test("dome cleanup also finds and restarts affected rovers", function()
+	local obj = mobile_fixture("RCTransport")
+	local city = { labels = { RCTransport = { obj } } }
+	local dome = { class = "Dome", city = city, labels = {} }
+	obj.target = dome
+	assert(type(FD.Dome.IdleAffectedRovers) == "function", "dome has no rover recovery")
+	assert(FD.Dome.IdleAffectedRovers(dome, {}, {}, { [dome] = true }) == 1)
+	assert(obj.new_command_started)
+end)
+test("full dome deletion restarts survivors and leaves unrelated units alone", function()
+	local colonist = mobile_fixture("Colonist")
+	local drone = mobile_fixture("Drone")
+	local rover = mobile_fixture("RCTransport")
+	local shuttle = mobile_fixture("CargoShuttle")
+	local unrelated = mobile_fixture("Drone")
+	local city = { labels = { Colonist = { colonist }, Drone = { drone, unrelated }, RCTransport = { rover }, CargoShuttle = { shuttle } } }
+	local dome = { class = "Dome", city = city, labels = { Colonist = { colonist } } }
+	function dome:delete() self.deleted = true end
+	colonist.dome = dome
+	drone.target = dome
+	rover.target = dome
+	shuttle.dest_dome = dome
+	local controller = { drones = { drone } }
+	drone.command_center = controller
+	assert(FD.Dome.Delete(dome))
+	assert(dome.deleted)
+	for _, obj in ipairs({ colonist, drone, rover, shuttle }) do
+		assert(IsValidThread(obj.command_thread) and obj.new_command_started, obj.class .. " has no fresh command")
+	end
+	assert(drone.command_center == controller)
+	assert(not unrelated.new_command_started and unrelated.command == "Work")
+end)
+
 print(string.format("%d passed, %d failed", passed, failures))
 os.exit(failures == 0 and 0 or 1)

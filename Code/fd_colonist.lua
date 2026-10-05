@@ -149,12 +149,7 @@ end
 
 -- Return whether an object or point has a valid game position.
 local function HasValidPosition(value)
-	local is_valid_pos = FD.Global("IsValidPos")
-	if type(is_valid_pos) ~= "function" then
-		return value ~= nil
-	end
-
-	return FD.SafeCall(is_valid_pos, value) and true or false
+	return FD.HasValidPosition(value)
 end
 
 -- Return a safe position from one related object.
@@ -185,7 +180,6 @@ local function EnsureValidPosition(colonist)
 	for _, field in ipairs({ "holder", "building", "dome", "residence", "workplace" }) do
 		local pos = PositionFromObject(FD.ReadField(colonist, field), colonist)
 		if pos and type(FD.ReadField(colonist, "SetPos")) == "function" then
-			FD.WriteField(colonist, "holder", false)
 			if FD.CallObjectMethod(colonist, "SetPos", pos) then
 				return HasValidPosition(colonist)
 			end
@@ -198,6 +192,7 @@ end
 -- Clear movement and visit state that may reference soon-deleted objects.
 local function PrepareForRelatedObjectDelete(colonist)
 	EnsureValidPosition(colonist)
+	FD.DetachUnitForRecovery(colonist)
 	ClearTransportTicket(colonist)
 	ClearTransportTask(colonist)
 	PrepareForDelete(colonist)
@@ -216,7 +211,7 @@ local function RestartIdleCommand(colonist)
 		return false
 	end
 
-	return FD.CallObjectMethod(colonist, "SetCommand", "Idle", "checked")
+	return FD.StartIdleCommand(colonist, "checked")
 end
 
 -- Return whether two objects are safely on the same map.
@@ -314,10 +309,9 @@ function Colonist.IdleForRelatedObjectDelete(colonist)
 		return false
 	end
 
-	PrepareForRelatedObjectDelete(colonist)
 	FD.StopCommandNoDestructors(colonist)
-	RestartIdleCommand(colonist)
-	return true
+	PrepareForRelatedObjectDelete(colonist)
+	return RestartIdleCommand(colonist)
 end
 
 -- Delete a colonist through the safest available game path.

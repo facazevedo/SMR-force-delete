@@ -153,7 +153,8 @@ local function DetachUnitFromRocket(unit, fallback_pos)
 	end
 
 	FD.StopCommandNoDestructors(unit)
-	FD.WriteField(unit, "holder", false)
+	local container = FD.ReadField(unit, "holder") or FD.CallMethod(unit, "GetParent")
+	FD.DetachUnitForRecovery(unit, fallback_pos)
 	FD.WriteField(unit, "building", false)
 	FD.WriteField(unit, "target", false)
 	FD.WriteField(unit, "goto_target", false)
@@ -162,16 +163,14 @@ local function DetachUnitFromRocket(unit, fallback_pos)
 	FD.WriteField(unit, "w_request", nil)
 	FD.WriteField(unit, "picked_up_from_req", nil)
 
-	if fallback_pos and type(FD.ReadField(unit, "SetPos")) == "function" then
-		FD.CallObjectMethod(unit, "SetPos", fallback_pos)
-	end
-
-	FD.CallObjectMethod(unit, "SetHolder", false)
-	FD.CallObjectMethod(unit, "SetOutside", true)
-
 	if FD.Drone and FD.Drone.IsDrone(unit) then
-		FD.CallObjectMethod(unit, "SetCommand", "Idle")
+		return FD.Drone.IdleForRelatedObjectDelete(unit, container and { [container] = true } or nil)
+	elseif FD.Colonist and FD.Colonist.IsColonist(unit) then
+		return FD.Colonist.IdleForRelatedObjectDelete(unit)
+	elseif FD.Rover and FD.Rover.IsRover(unit) then
+		return FD.Rover.IdleForRelatedObjectDelete(unit)
 	end
+	return FD.StartIdleCommand(unit)
 end
 
 -- Detach rocket-owned units before the rocket object is removed.

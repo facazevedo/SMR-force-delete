@@ -161,7 +161,11 @@ function Shuttle.IdleForRelatedObjectDelete(shuttle)
 
 	FD.StopCommandNoDestructors(shuttle)
 	PrepareForRelatedObjectDelete(shuttle)
-	return true
+	-- The interrupted command has stopped; it no longer needs the task kept
+	-- alive for its destructor. Idle must be free to choose a fresh task.
+	FD.WriteField(shuttle, "transport_task", nil)
+	FD.WriteField(shuttle, "is_colonist_transport_task", false)
+	return FD.StartIdleCommand(shuttle)
 end
 
 -- Show shuttle diagnostics for the selected object.

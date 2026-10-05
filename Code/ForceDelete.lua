@@ -410,11 +410,13 @@ function FD.StopCommandNoDestructors(obj)
 	FD.WriteField(obj, "command_destructors", false)
 	FD.WriteField(obj, "command_queue", nil)
 	FD.WriteField(obj, "forced_cmd_importance", nil)
+	FD.WriteField(obj, "uninterruptable_importance", nil)
+	FD.WriteField(obj, "dont_clear_queue", nil)
 
-	for _, thread in ipairs({
-		FD.ReadField(obj, "command_thread"),
-		FD.ReadField(obj, "thread_running_destructors"),
-	}) do
+	-- Iterate field names so a missing command thread cannot hide a live
+	-- destructor thread in the second slot of a sparse array.
+	for _, field in ipairs({ "command_thread", "thread_running_destructors" }) do
+		local thread = FD.ReadField(obj, field)
 		if FD.SafeCall(FD.Global("IsValidThread"), thread) then
 			FD.SafeCall(FD.Global("DeleteThread"), thread)
 		end
@@ -423,6 +425,60 @@ function FD.StopCommandNoDestructors(obj)
 	FD.WriteField(obj, "command_thread", nil)
 	FD.WriteField(obj, "thread_running_destructors", nil)
 	FD.WriteField(obj, "command", "Idle")
+end
+
+-- Engine objects expose IsValidPos as a method; the global also accepts points.
+function FD.HasValidPosition(value)
+	local method = FD.ReadField(value, "IsValidPos")
+	if type(method) == "function" then
+		local ok, valid = pcall(method, value)
+		return ok and valid == true
+	end
+	local is_valid_pos = FD.Global("IsValidPos")
+	if type(is_valid_pos) == "function" then
+		return FD.SafeCall(is_valid_pos, value) and true or false
+	end
+	return value ~= nil and value ~= false
+end
+
+-- Release native attachment/holder state while the container still exists.
+function FD.DetachUnitForRecovery(unit, fallback_pos)
+	local holder = FD.ReadField(unit, "holder")
+	local parent = FD.CallMethod(unit, "GetParent")
+	local pos = fallback_pos
+	if not FD.HasValidPosition(pos) then
+		pos = FD.CallMethod(unit, "GetVisualPos")
+	end
+	if not FD.HasValidPosition(pos) then
+		pos = FD.CallMethod(holder, "GetPos") or FD.CallMethod(parent, "GetPos")
+	end
+	if parent then
+		FD.CallObjectMethod(unit, "Detach")
+	end
+	if not FD.HasValidPosition(unit) and FD.HasValidPosition(pos) then
+		FD.CallObjectMethod(unit, "SetPos", pos)
+	end
+	if not FD.CallObjectMethod(unit, "SetHolder", false) then
+		FD.WriteField(unit, "holder", false)
+	end
+	if holder or parent then
+		FD.CallObjectMethod(unit, "SetOutside", true)
+	end
+	return FD.HasValidPosition(unit)
+end
+
+-- Changing the command field alone does not create a command thread.
+function FD.StartIdleCommand(unit, ...)
+	if not FD.IsObjectValid(unit) or FD.ReadField(unit, "dead") == true
+		or FD.ReadField(unit, "destroyed") == true or FD.MethodBool(unit, "IsDead") == true then
+		return false
+	end
+	local set_command = FD.ReadField(unit, "SetCommand")
+	if type(set_command) ~= "function" then
+		return false
+	end
+	local ok, result = pcall(set_command, unit, "Idle", ...)
+	return ok and result ~= false
 end
 
 -- Deactivate the rover/unit-control dialog before a controlled unit is deleted.

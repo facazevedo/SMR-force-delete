@@ -43,7 +43,6 @@ local methods = { "SetCommand", "DieNow", "delete" }
 
 -- Object fields can safely use false as the engine's empty reference value.
 local object_reference_fields = {
-	"command_center",
 	"target",
 	"goto_target",
 	"fx_moving_target",
@@ -72,10 +71,11 @@ end
 
 -- Clear target and request state before related objects are deleted.
 local function PrepareForRelatedObjectDelete(drone)
+	FD.CallObjectMethod(drone, "ClearPath")
+	FD.DetachUnitForRecovery(drone)
+	FD.CallObjectMethod(drone, "DropCarriedResource")
 	ClearFields(drone, object_reference_fields, false)
 	ClearFields(drone, request_reference_fields, nil)
-	FD.WriteField(drone, "resource", false)
-	FD.WriteField(drone, "amount", 0)
 end
 
 -- Show one standard drone delete result message.
@@ -131,14 +131,19 @@ function Drone.OnSelected(obj)
 end
 
 -- Detach a drone from doomed objects without running stale request destructors.
-function Drone.IdleForRelatedObjectDelete(drone)
+function Drone.IdleForRelatedObjectDelete(drone, deleted_objects)
 	if not Drone.IsDrone(drone) then
 		return false
 	end
 
 	FD.StopCommandNoDestructors(drone)
 	PrepareForRelatedObjectDelete(drone)
-	return true
+	local controller = FD.ReadField(drone, "command_center")
+	if not FD.IsObjectValid(controller) or (deleted_objects and deleted_objects[controller]) then
+		FD.CallObjectMethod(drone, "SetCommandCenter", false)
+		FD.WriteField(drone, "command_center", false)
+	end
+	return FD.StartIdleCommand(drone)
 end
 
 -- Delete a drone through the safest available game path.

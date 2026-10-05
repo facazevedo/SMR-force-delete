@@ -763,11 +763,28 @@ end
 
 -- Detach and idle drones before deleting the objects they target.
 function Dome.IdleAffectedDrones(dome, passages, internal_buildings, targets)
+	targets = targets or Dome.BuildDeletionTargetSet(dome, passages, internal_buildings)
 	return FD.CountSuccessfulActions(
 		Dome.CollectAffectedDrones(dome, passages, internal_buildings, targets),
 		function(drone)
-			return FD.Drone and FD.Drone.IdleForRelatedObjectDelete(drone)
+			return FD.Drone and FD.Drone.IdleForRelatedObjectDelete(drone, targets)
 		end
+	)
+end
+
+-- Rover commands may also target internal construction, passages, or a holder.
+function Dome.RoverTargetsDomeDelete(rover, dome, targets)
+	return FD.Rover and FD.Rover.IsRover(rover) and (
+		Dome.FieldsTargetDomeDelete(rover, drone_reference_fields, dome, targets)
+		or Dome.ValueTargetsDomeDelete(FD.CallMethod(rover, "GetParent"), dome, targets)
+		or Dome.TableTargetsDomeDelete(FD.ReadField(rover, "transport_route"), dome, targets)
+	)
+end
+
+function Dome.IdleAffectedRovers(dome, passages, internal_buildings, targets)
+	return FD.CountSuccessfulActions(
+		Dome.CollectAffectedObjects(dome, passages, internal_buildings, Dome.RoverTargetsDomeDelete, targets),
+		function(rover) return FD.Rover.IdleForRelatedObjectDelete(rover) end
 	)
 end
 
@@ -1214,6 +1231,8 @@ local function DomeDeletionMessage(result)
 		.. FD.SafeToString(result.idled_colonists)
 		.. "\nDrones idled: "
 		.. FD.SafeToString(result.idled_drones)
+		.. "\nRovers idled: "
+		.. FD.SafeToString(result.idled_rovers)
 		.. "\nShuttles idled: "
 		.. FD.SafeToString(result.idled_shuttles)
 		.. "\nDome lights disabled: "
@@ -1290,6 +1309,7 @@ function Dome.Delete(dome)
 	local lights_disabled = Dome.DisableDomeLights(dome, internal_buildings)
 	local idled_colonists = Dome.IdleAffectedColonists(dome, passages, internal_buildings, targets)
 	local idled_drones = Dome.IdleAffectedDrones(dome, passages, internal_buildings, targets)
+	local idled_rovers = Dome.IdleAffectedRovers(dome, passages, internal_buildings, targets)
 	local idled_shuttles = Dome.IdleAffectedShuttles(dome, passages, internal_buildings, targets)
 	local passage_demolished, passage_deleted = Dome.DeletePassagesSequentially(passages)
 	local passages_remaining = Dome.CountConnectedPassages(dome)
@@ -1306,6 +1326,7 @@ function Dome.Delete(dome)
 		passage_ids = passage_ids,
 		idled_colonists = idled_colonists,
 		idled_drones = idled_drones,
+		idled_rovers = idled_rovers,
 		idled_shuttles = idled_shuttles,
 		lights_disabled = lights_disabled,
 		passage_demolished = passage_demolished,

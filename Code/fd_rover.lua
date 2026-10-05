@@ -149,8 +149,16 @@ function Rover.IdleForRelatedObjectDelete(rover)
 		return false
 	end
 
-	PrepareForDelete(rover)
-	return true
+	-- The rover survives: retain its own resource/repair requests and drone
+	-- connections, and clear only the interrupted route and container links.
+	FD.DeactivateUnitControlFor(rover)
+	FD.StopCommandNoDestructors(rover)
+	FD.CallObjectMethod(rover, "ClearPath")
+	FD.DetachUnitForRecovery(rover)
+	for _, field in ipairs(related_delete_fields) do
+		FD.WriteField(rover, field, false)
+	end
+	return FD.StartIdleCommand(rover)
 end
 
 -- Show rover diagnostics for the selected object.
