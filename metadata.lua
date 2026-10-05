@@ -6,7 +6,7 @@ return PlaceObj('ModDef', {
 	'last_changes', "Fixed recursive passage deletion and hub evacuation waits during dome removal; cleared interrupted traversal and stale rocket passenger destinations",
 	'id', "ForceDelete",
 	'author', "fredware",
-	'version', 13,
+	'version', 14,
 	'lua_revision', 350453,
 	'saved_with_revision', 405907,
 	'code', {
@@ -27,9 +27,10 @@ return PlaceObj('ModDef', {
 		"Code/fd_external_building.lua",
 		"Code/fd_dome.lua",
 	},
-	'saved', 1791221730,
+	'saved', 1791225015,
+	'code_hash', -5361067521267479914,
 	'pdx_id', 144462,
-	'pdx_version', "3",
+	'pdx_version', "4",
 	'steam_id', "3759755478",
 	'TagInterface', true,
 })
