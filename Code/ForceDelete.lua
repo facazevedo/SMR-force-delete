@@ -568,6 +568,13 @@ function FD.DeleteObjectDirect(obj)
 		return true
 	end
 
+	-- PassageGridElement:Done may delete its controller when the last segment
+	-- disappears. Direct controller deletion must use the same guard as the
+	-- native PassageBase:OnDemolish path, before any Done methods run.
+	if FD.IsKindOf(obj, "PassageBase") then
+		FD.WriteField(obj, "CanDelete", function() return false end)
+	end
+
 	if FD.CallObjectMethod(obj, "delete") then
 		return true
 	end

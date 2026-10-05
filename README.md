@@ -1,6 +1,6 @@
 # Force Delete
 
-Version 12 targets Surviving Mars: Relaunched **1.1.1.405907** on Windows.
+Version 13 targets Surviving Mars: Relaunched **1.1.1.405907** on Windows.
 
 Copy this folder into `%AppData%\Surviving Mars Relaunched\Mods\ForceDelete`, then enable **Force Delete** in the game's Mod Manager.
 
@@ -10,6 +10,8 @@ Copy this folder into `%AppData%\Surviving Mars Relaunched\Mods\ForceDelete`, th
 Advanced dome deletion can cause crashes, as described in the mod's in-game description.
 
 ## Compatibility changes
+
+Version 13 fixes the mod warning when removing domes connected to passages or passage hubs. Forced passage removal prevents recursive controller destruction and uses native cleanup without waiting for interrupted traversal commands. Colonist recovery releases passage registrations and old migration destinations. Rocket passenger unloading discards deleted domes from its saved destination list before choosing housing.
 
 Dome deletion restarts the command system for surviving colonists, drones, rovers, and shuttles so they can choose their normal next actions. Drones retain surviving controllers; rover recovery retains their own repair/resource requests. Rocket cleanup also detaches and restarts surviving passengers and rovers. Units still need reachable housing, controllers, or available work to move.
 
@@ -21,8 +23,8 @@ The latest gameplay patch is [1.1.1](https://store.steampowered.com/news/app/321
 
 ## Validation
 
-Run `lua tests/compatibility.lua` from this directory with Lua 5.4. The 19 fixtures cover reserved meals, native ticket cancellation, older game APIs, shortcut/class/message-registry reloads, fresh command threads for survivors, and complete dome cleanup without interrupting unrelated units. They do not connect to a running game.
+Run `lua tests/compatibility.lua` from this directory with Lua 5.4. The 23 fixtures cover reserved meals, native ticket cancellation, older game APIs, shortcut/class/message-registry reloads, survivor recovery, recursive passage deletion, stale arrival destinations, and duplicate recovery scans. They do not connect to a running game.
 
-Compatibility APIs were checked against the installed ModTools source. The installed game's log reports Lua revision 405907 and build 1.1.1.405907. Full in-game regression testing on that build is pending; the existing game session was left untouched. Earlier in-game testing was on 1.0.7.
+Native validation used `MarsDebug.exe` revision 405907 and the supplied `United States of Mars.savegame.sav`, without saving the test colony. The scenario in `scenarios/dome_passage_cleanup.lua` deletes dome 1812 and its four passages, verifies one destruction per passage, and checks cleanup calls. A second dome (3341) was removed through the actual Ctrl+Shift+Delete shortcut, with no Lua errors or native assertions in the final test log. Run the scenario with the SMR harness after loading a fresh copy of that save in an isolated session. This is a targeted regression test, not exhaustive coverage of every deletion type.
 
 The stale editor-generated code hash was removed. The Mod Editor calculates a fresh hash when saving the updated mod. Steam and Paradox publication IDs remain unchanged; a GitHub push does not update either marketplace.

@@ -35,6 +35,8 @@ local state_fields = {
 	"path",
 	"passage",
 	"passage_obj",
+	"traversing_passage",
+	"passage_hub",
 	"tunnel",
 	"entering_tunnel",
 	"leaving_tunnel",
@@ -62,6 +64,8 @@ local methods = {
 
 -- Movement and visit fields can safely use false as the engine's empty reference value.
 local movement_reference_fields = {
+	"emigration_dome",
+	"emigration_elevator",
 	"target",
 	"goto_target",
 	"destination",
@@ -73,6 +77,8 @@ local movement_reference_fields = {
 	"path",
 	"passage",
 	"passage_obj",
+	"traversing_passage",
+	"passage_hub",
 	"tunnel",
 	"entering_tunnel",
 	"leaving_tunnel",
@@ -191,6 +197,10 @@ end
 
 -- Clear movement and visit state that may reference soon-deleted objects.
 local function PrepareForRelatedObjectDelete(colonist)
+	-- Stopping commands without destructors skips TraverseTunnel's registration
+	-- cleanup. Remove it explicitly before the passage and its segments vanish.
+	local passage = FD.ReadField(colonist, "traversing_passage")
+	FD.RemoveObjectFromTable(FD.ReadField(passage, "traversing_colonists"), colonist)
 	EnsureValidPosition(colonist)
 	FD.DetachUnitForRecovery(colonist)
 	ClearTransportTicket(colonist)
@@ -296,6 +306,32 @@ function Colonist.PatchEnterBuilding()
 	return true
 end
 
+-- Rocket unloading keeps a local destination list across sleeps. A dome can
+-- disappear between passengers, so validate that snapshot before native scoring.
+function Colonist.PatchChooseDome()
+	local original = FD.Global("ChooseDome")
+	if type(original) ~= "function" then return false end
+	if original == Colonist.choose_dome_wrapper then return true end
+	local wrapper = function(colonist, domes, safety_dome, ...)
+		local filtered
+		for i, dome in ipairs(domes or {}) do
+			if not FD.IsObjectValid(dome) then
+				if not filtered then
+					filtered = {}
+					for j = 1, i - 1 do filtered[#filtered + 1] = domes[j] end
+				end
+			elseif filtered then
+				filtered[#filtered + 1] = dome
+			end
+		end
+		if safety_dome and not FD.IsObjectValid(safety_dome) then safety_dome = nil end
+		return original(colonist, filtered or domes, safety_dome, ...)
+	end
+	_G.ChooseDome = wrapper
+	Colonist.choose_dome_wrapper = wrapper
+	return true
+end
+
 -- Show colonist diagnostics for the selected object.
 function Colonist.OnSelected(obj)
 	if FD.DisplayAttributes then
@@ -386,5 +422,8 @@ FD.ChainOnMsg("ClassesPostprocess", "force_delete_colonist_exit_vehicle", Coloni
 FD.ChainOnMsg("DataLoaded", "force_delete_colonist_exit_vehicle", Colonist.PatchExitVehicle)
 FD.ChainOnMsg("ClassesPostprocess", "force_delete_colonist_enter_building", Colonist.PatchEnterBuilding)
 FD.ChainOnMsg("DataLoaded", "force_delete_colonist_enter_building", Colonist.PatchEnterBuilding)
+FD.ChainOnMsg("ClassesPostprocess", "force_delete_choose_dome", Colonist.PatchChooseDome)
+FD.ChainOnMsg("DataLoaded", "force_delete_choose_dome", Colonist.PatchChooseDome)
 Colonist.PatchExitVehicle()
 Colonist.PatchEnterBuilding()
+Colonist.PatchChooseDome()

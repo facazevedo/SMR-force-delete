@@ -56,6 +56,7 @@ local colonist_reference_fields = {
 	"destination",
 	"passage",
 	"passage_obj",
+	"traversing_passage",
 	"tunnel",
 	"entering_tunnel",
 	"leaving_tunnel",
@@ -642,10 +643,15 @@ function Dome.CollectAffectedObjectsFromContainer(container, matches, objects, s
 
 	for _, label_list in pairs(labels) do
 		ForEachTableObject(label_list, function(obj)
+			-- The same unit appears in many overlapping city/colony labels.
+			-- Remember rejected candidates too; repeated full predicates can hit
+			-- the engine's instruction limit inside a synchronous shortcut.
+			if seen[obj] then return end
+			seen[obj] = true
 			local ok, is_match = pcall(matches, obj)
 
 			if ok and is_match then
-				FD.AddUniqueObject(objects, seen, obj)
+				objects[#objects + 1] = obj
 			end
 		end)
 	end
@@ -1167,23 +1173,18 @@ function Dome.ResetTerrain(dome)
 	return ok and true or false
 end
 
--- Demolish one passage and run Level 2 only if demolition left it valid.
+-- Forced dome removal cannot wait for hub/traversal evacuation in OnDemolish:
+-- the affected colonist commands have already been stopped. Native Done still
+-- disconnects the passage, restores its supply connections and removes pieces.
 function Dome.DeletePassageSequentially(passage)
 	if not Dome.IsPassageController(passage) then
 		return false, false
 	end
 
-	local demolished = FD.Level1DemolishObject(passage)
-	local deleted = false
-
-	if FD.IsObjectValid(passage) then
-		deleted = FD.Level2DeleteObject(passage)
-	end
-
-	return demolished, deleted
+	return false, FD.DeleteObjectDirect(passage)
 end
 
--- Demolish and then delete each connected passage before moving to the next.
+-- Delete each connected passage before moving to the next.
 function Dome.DeletePassagesSequentially(passages)
 	local demolished = 0
 	local deleted = 0

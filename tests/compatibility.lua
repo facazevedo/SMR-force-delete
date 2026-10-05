@@ -280,5 +280,64 @@ test("full dome deletion restarts survivors and leaves unrelated units alone", f
 	assert(not unrelated.new_command_started and unrelated.command == "Work")
 end)
 
+test("direct passage cleanup cannot recursively delete its controller", function()
+	local passage = { class = "PassageBase", elements = { {} }, elements_under_construction = {} }
+	function passage:CanDelete() return #self.elements == 0 end
+	local deletes = 0
+	function passage:delete()
+		deletes = deletes + 1
+		if deletes == 1 then
+			-- PassageGridElement:Done calls DoneObject(controller) for the last segment.
+			self.elements = {}
+			if self:CanDelete() then self:delete() end
+		end
+		self.deleted = true
+	end
+	assert(FD.DeleteObjectDirect(passage))
+	assert(deletes == 1, "passage controller was destroyed recursively")
+end)
+
+test("dome selection drops deleted destinations from an in-flight snapshot", function()
+	local deleted, live = { deleted = true }, {}
+	local snapshot = { deleted, live }
+	local elevator = {}
+	ChooseDome = function(colonist, domes, safety, elevators)
+		assert(#domes == 1 and domes[1] == live, "deleted destination reached native scoring")
+		assert(not safety, "deleted fallback destination survived")
+		return domes[1], elevators[domes[1]], "preserved return"
+	end
+	assert(FD.Colonist.PatchChooseDome())
+	local wrapper = ChooseDome
+	FD.Colonist.PatchChooseDome()
+	assert(ChooseDome == wrapper, "wrapper installed twice")
+	local destination, via, extra = ChooseDome({}, snapshot, deleted, { [live] = elevator })
+	assert(destination == live and via == elevator and extra == "preserved return")
+	assert(snapshot[1] == deleted and #snapshot == 2, "caller-owned snapshot changed")
+end)
+test("colonist recovery releases its interrupted passage registration", function()
+	local obj = colonist_fixture(false)
+	local passage = { traversing_colonists = { obj } }
+	obj.traversing_passage = passage
+	obj.emigration_dome = {}
+	assert(FD.Colonist.IdleForRelatedObjectDelete(obj))
+	assert(#passage.traversing_colonists == 0 and not obj.traversing_passage)
+	assert(not obj.emigration_dome, "stale migration destination survived reset")
+end)
+
+test("overlapping city labels evaluate each recovery candidate only once", function()
+	local a, b = {}, {}
+	local calls = {}
+	local city = { labels = { Unit = { a, b }, Worker = { a, b }, Other = { [a] = true } } }
+	local objects, seen = {}, {}
+	local function matches(obj)
+		calls[obj] = (calls[obj] or 0) + 1
+		return obj == a
+	end
+	FD.Dome.CollectAffectedObjectsFromContainer(city, matches, objects, seen)
+	FD.Dome.CollectAffectedObjectsFromContainer(city, matches, objects, seen)
+	assert(calls[a] == 1 and calls[b] == 1, "duplicate labels repeated expensive recovery predicates")
+	assert(#objects == 1 and objects[1] == a)
+end)
+
 print(string.format("%d passed, %d failed", passed, failures))
 os.exit(failures == 0 and 0 or 1)
